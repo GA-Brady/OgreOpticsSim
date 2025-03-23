@@ -4,33 +4,133 @@
 using Markdown
 using InteractiveUtils
 
+# ╔═╡ ef223e66-6826-4ab9-b104-8124d3492aed
+begin
+	using DataFrames
+	using Plots
+	using ImageIO
+	using FITSIO
+	using FileIO
+	# using Paths
+	using Colors
+	using PlutoUI
+	using Images
+	# using Printf
+end
+
+# ╔═╡ 030c1024-fb93-11ef-2b4b-eb960db95896
+#=
+Author: Garrett Brady
+Affil :	McEntaffer Group @Penn_State
+Start : March 7th, 2025
+
+This pluto notebook serves to complete the Simulation for Optical Scattering with the OGRE-P payload. In short, this script aims to determine the requried properties of optical blocking filters before the X-ray CCD's to limit the background saturation. 
+=#
+
+# ╔═╡ b5e611b8-9484-47ba-9f85-6ee20e1c8f0d
+# ╠═╡ disabled = true
+#=╠═╡
+@time begin
+	# Create an image array
+	img = Array{RGB{Float64},2}(undef, image_height, image_width)
+	
+	# Fill the image with color values
+	for j in 1:image_height
+	    for i in 1:image_width
+	        r = (i - 1) / (image_width - 1)
+	        g = (j - 1) / (image_height - 1)
+	        b = 0.0
+	        img[j, i] = RGB(r, g, b) # makes an image from [j, i] values
+	    end
+	end
+	
+	# Display the image in Pluto
+	plot(img, axis=false, border=:none)
+end
+  ╠═╡ =#
+
+# ╔═╡ 64d7ac23-91f3-4746-b39f-2206a2fbd22f
+md"### Setup & Helper"
+
+# ╔═╡ 7fe44050-38ae-419a-99ed-f7a4e32b7c7c
+#=
+Need to come up with a robust way of mapping wvln to color
+=#
+module _Wvln
+	mutable struct RGB
+		r::Integer
+		g::Integer
+		b::Integer
+
+		RGB() = new(0,0,0)
+		RGB(r,g,b) = new(r,g,b)
+	end
+end
+
+# ╔═╡ 8c9ec56f-a7ae-4169-8019-a3d6278f1f1f
+_Wvln.RGB(13,80,100)
+
 # ╔═╡ fc3a2308-6399-48f8-92aa-f1344f8f686c
 #=
 Module for defining rays & vector properties
 =# 
-module _Vec3
-	using printf
+module _Vectors
 	export Vec3, Point3, dot, cross, unit_vector
 
-	struct Vec3
+	mutable struct Vec3
 		x::Float64
 		y::Float64
 		z::Float64
 
-		Vec3() = Vec3(0.0, 0.0, 0.0)
-		Vec3(x::Float64, y::Float64, z::Float64) = Vec3(x,y,z)
+		Vec3()      = new(0,0,0) # vector without args generates 0 vector
+		Vec3(x,y,z) = new(x,y,z)
 	end
 
-	const Point3 = Vec3
+	struct Point # points are immutable - cannot do vector calculations on them
+		x::Float64
+		y::Float64
+		z::Float64
+
+		Point() = new(0,0,0) # point without args generates at the origin
+		Point(x,y,z) = new(x,y,z)
+	end 
+
+	mutable struct Ray
+		origin::Point
+		direction::Vec3
+
+		Ray() = new(Point(),Vec3())
+		Ray(origin, direction) = new(origin, direction)
+	end
+
+	function write_color(io::IO, pixel_color::Vec3)
+	    r = pixel_color.x
+	    g = pixel_color.y
+	    b = pixel_color.z
+	
+	    # Translate the [0,1] component values to the byte range [0,255].
+	    rbyte = Int(floor(255.999 * r))
+	    gbyte = Int(floor(255.999 * g))
+	    bbyte = Int(floor(255.999 * b))
+	
+	    # Write out the pixel color components.
+	    println(io, "$rbyte $gbyte $bbyte")
+	end
+
+	function ray_color(r::Ray)
+		unit_direction = normalize(r.direction)
+    	a = 0.5 * (unit_direction.y + 1.0)
+    	return (1.0 - a) * Vec3(1.0, 1.0, 1.0) + a * Vec3(0.5, 0.7, 1.0)
+	end
 
 	# overloaded operators
-	Base.:+(u::Vec3, v::Vec3) = Vec3(u.x + v.x, u.y + v.y, u.z + v.z)
-	Base.:-(u::Vec3, v::Vec3) = Vec3(u.x - v.x, u.y - v.y, u.z - v.z)
-	Base.:-(v::Vec3) = Vec3(-v.x, -v.y, -v.z)
+	Base.:+(u::Union{Point,Vec3}, v::Union{Point,Vec3}) = Vec3(u.x + v.x, u.y + v.y, u.z + v.z)
+	Base.:-(u::Union{Point,Vec3}, v::Union{Point,Vec3}) = Vec3(u.x - v.x, u.y - v.y, u.z - v.z)
+	Base.:-(v::Union{Point,Vec3}) = Vec3(-v.x, -v.y, -v.z)
 	Base.:*(u::Vec3, v::Vec3) = Vec3(u.x * v.x, u.y * v.y, u.z * v.z)
-	Base.:*(t::Float64, v::Vec3) = Vec3(t * v.x, t * v.y, t * v.z)
-	Base.:*(v::Vec3, t::Float64) = t * v
-	Base.:/(v::Vec3, t::Float64) = (1/t) * v
+	Base.:*(t::Union{Float64, Int64}, v::Vec3) = Vec3(t * v.x, t * v.y, t * v.z)
+	Base.:*(v::Vec3, t::Union{Float64, Int64}) = t * v
+	Base.:/(v::Vec3, t::Union{Float64, Int64}) = (1/t) * v
 
 	# Vector operations
 	function dot(u::Vec3, v::Vec3)
@@ -52,38 +152,35 @@ module _Vec3
 	function unit_vector(v::Vec3)
 	    return v / length(v)
 	end
-	
-	# Display function
-	function Base.show(io::IO, v::Vec3)
-	    @printf(io, "%.3f %.3f %.3f", v.x, v.y, v.z)
+
+	# Ray Operator
+	function at(ray::Ray, t::Float64)
+		return Ray(ray.origin, t* ray.direction)
 	end
 end
 
-# ╔═╡ ef223e66-6826-4ab9-b104-8124d3492aed
+# ╔═╡ 71e9eebd-9d94-405f-9d5f-a338507c9331
 begin
-	using DataFrames
-	using Plots
-	using ImageIO
-	using FITSIO
-	using FileIO
-	# using Paths
-	using Colors
-	using PlutoUI
-	using Images
-	using Printf
+	# camera
+	focal_length = 1.0
+	camera_center = _Vectors.Point(0,0,0)
+
+	# setting viewport settings
+	viewport_height = 2.0;
+	viewport_width = viewport_height * ((image_width)/image_height);
+
+	# calculating vectors from viewport edges
+	vp_u = _Vectors.Vec3(viewport_width, 0, 0)
+	vp_v = _Vectors.Vec3(0, -viewport_height, 0)
+
+	# pixel to pixel distance 
+	pixel_Δu = vp_u / image_width
+	pixel_Δv = vp_u / image_height
+
+	# calculate the locaiton of upper left pixel
+	vp_ul = camera_center - _Vectors.Vec3(0,0, focal_length) - vp_u/2 - vp_v/2
+	pixel00_loc = vp_ul + .5 * (pixel_Δu + pixel_Δv)
 end
-
-# ╔═╡ 030c1024-fb93-11ef-2b4b-eb960db95896
-#=
-Author: Garrett Brady
-Affil :	McEntaffer Group @Penn_State
-Start : March 7th, 2025
-
-This pluto notebook serves to complete the Simulation for Optical Scattering with the OGRE-P payload. In short, this script aims to determine the requried properties of optical blocking filters before the X-ray CCD's to limit the background saturation. 
-=#
-
-# ╔═╡ 64d7ac23-91f3-4746-b39f-2206a2fbd22f
-md"### Setup & Helper"
 
 # ╔═╡ cdc1f5ba-ca06-4ac9-b4c7-b2157df8c00b
 begin
@@ -94,6 +191,8 @@ begin
 end
 
 # ╔═╡ 7dd20da4-9268-4f28-a0d8-510c564f2569
+# ╠═╡ disabled = true
+#=╠═╡
 begin
 	image_width = 256
 	image_height = 256
@@ -122,24 +221,46 @@ begin
 		end
 	end
 end
+  ╠═╡ =#
 
-# ╔═╡ b5e611b8-9484-47ba-9f85-6ee20e1c8f0d
-@time begin
-	# Create an image array
-	img = Array{RGB{Float64},2}(undef, image_height, image_width)
+# ╔═╡ 0c94476a-4e84-449e-96f9-82bdba75638c
+# ╠═╡ disabled = true
+#=╠═╡
+begin
+	test_image = joinpath(image_dir, "test.ppm")
+	open(test_image, "w") do io
+		
+	println(io, "P3")
+	println(io, "$image_width $image_height")
+	println(io, "255")
 	
-	# Fill the image with color values
-	for j in 1:image_height
-	    for i in 1:image_width
-	        r = (i - 1) / (image_width - 1)
-	        g = (j - 1) / (image_height - 1)
-	        b = 0.0
-	        img[j, i] = RGB(r, g, b) # makes an image from [j, i] values
+	for j in 0:image_height-1
+	    print("\rScanlines remaining: ", image_height - j, " ")
+	    flush(stdout)
+	    for i in 0:image_width-1
+	        pixel_center = pixel00_loc + (i * pixel_Δu) + (j * pixel_Δv)
+	        ray_direction = pixel_center - camera_center
+	        r = _Vectors.Ray(camera_center, ray_direction)
+	        
+	        pixel_color = _Vectors.ray_color(r)
+	        _Vectors.write_color(stdout, pixel_color)
+			println(io, )
 	    end
 	end
 	
-	# Display the image in Pluto
-	plot(img, axis=false, border=:none)
+	println("\rDone.                 ")
+
+	end
+end
+  ╠═╡ =#
+
+# ╔═╡ e3abb105-ab54-47f0-9ee4-d9ba2f877d96
+begin
+	# setting image aspect ratios
+	aspect_ratio = 16/9
+	image_width  = 400
+	image_height = Int(floor(image_width*aspect_ratio))
+	image_height = (image_height < 1) ? 1 : image_height
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -153,7 +274,6 @@ ImageIO = "82e4d734-157c-48bb-816b-45c225c6df19"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [compat]
 Colors = "~0.13.0"
@@ -170,9 +290,9 @@ PlutoUI = "~0.7.61"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.3"
+julia_version = "1.11.4"
 manifest_format = "2.0"
-project_hash = "ad5102c63583c0a639c714153fe688cb47b326b7"
+project_hash = "e0f2ac2845d2cf4240590682662c57857b5918ef"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1286,7 +1406,7 @@ version = "2.4.0+0"
 [[deps.OpenLibm_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "05823500-19ac-5b8b-9628-191a04bc5112"
-version = "0.8.1+2"
+version = "0.8.1+4"
 
 [[deps.OpenSSL]]
 deps = ["BitFlags", "Dates", "MozillaCACerts_jll", "OpenSSL_jll", "Sockets"]
@@ -2130,7 +2250,12 @@ version = "1.4.1+2"
 # ╠═030c1024-fb93-11ef-2b4b-eb960db95896
 # ╠═7dd20da4-9268-4f28-a0d8-510c564f2569
 # ╠═b5e611b8-9484-47ba-9f85-6ee20e1c8f0d
+# ╠═e3abb105-ab54-47f0-9ee4-d9ba2f877d96
+# ╠═71e9eebd-9d94-405f-9d5f-a338507c9331
+# ╠═0c94476a-4e84-449e-96f9-82bdba75638c
 # ╟─64d7ac23-91f3-4746-b39f-2206a2fbd22f
+# ╠═8c9ec56f-a7ae-4169-8019-a3d6278f1f1f
+# ╠═7fe44050-38ae-419a-99ed-f7a4e32b7c7c
 # ╠═fc3a2308-6399-48f8-92aa-f1344f8f686c
 # ╠═cdc1f5ba-ca06-4ac9-b4c7-b2157df8c00b
 # ╠═ef223e66-6826-4ab9-b104-8124d3492aed
