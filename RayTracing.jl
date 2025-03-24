@@ -12,7 +12,6 @@ begin
 	using FITSIO
 	using FileIO
 	# using Paths
-	using Colors
 	using PlutoUI
 	using Images
 	# using Printf
@@ -27,102 +26,72 @@ Start : March 7th, 2025
 This pluto notebook serves to complete the Simulation for Optical Scattering with the OGRE-P payload. In short, this script aims to determine the requried properties of optical blocking filters before the X-ray CCD's to limit the background saturation. 
 =#
 
-# ╔═╡ b5e611b8-9484-47ba-9f85-6ee20e1c8f0d
-# ╠═╡ disabled = true
-#=╠═╡
-@time begin
-	# Create an image array
-	img = Array{RGB{Float64},2}(undef, image_height, image_width)
-	
-	# Fill the image with color values
-	for j in 1:image_height
-	    for i in 1:image_width
-	        r = (i - 1) / (image_width - 1)
-	        g = (j - 1) / (image_height - 1)
-	        b = 0.0
-	        img[j, i] = RGB(r, g, b) # makes an image from [j, i] values
-	    end
-	end
-	
-	# Display the image in Pluto
-	plot(img, axis=false, border=:none)
+# ╔═╡ acde8792-beba-40e8-ab42-fba842f5fc82
+struct meep
+	x::String
+
+	meep() = new("")
+	meep(x) = new(x)
 end
-  ╠═╡ =#
 
 # ╔═╡ 64d7ac23-91f3-4746-b39f-2206a2fbd22f
 md"### Setup & Helper"
 
-# ╔═╡ 7fe44050-38ae-419a-99ed-f7a4e32b7c7c
-#=
-Need to come up with a robust way of mapping wvln to color
-=#
-module _Wvln
-	mutable struct RGB
-		r::Integer
-		g::Integer
-		b::Integer
-
-		RGB() = new(0,0,0)
-		RGB(r,g,b) = new(r,g,b)
-	end
-end
-
-# ╔═╡ 8c9ec56f-a7ae-4169-8019-a3d6278f1f1f
-_Wvln.RGB(13,80,100)
-
 # ╔═╡ fc3a2308-6399-48f8-92aa-f1344f8f686c
-#=
-Module for defining rays & vector properties
-=# 
-module _Vectors
-	export Vec3, Point3, dot, cross, unit_vector
-
+begin
+	#=
+	Module for defining rays & vector properties
+	=# 
 	mutable struct Vec3
 		x::Float64
 		y::Float64
 		z::Float64
-
+	
 		Vec3()      = new(0,0,0) # vector without args generates 0 vector
 		Vec3(x,y,z) = new(x,y,z)
 	end
-
+	
 	struct Point # points are immutable - cannot do vector calculations on them
 		x::Float64
 		y::Float64
 		z::Float64
-
+	
 		Point() = new(0,0,0) # point without args generates at the origin
 		Point(x,y,z) = new(x,y,z)
 	end 
-
+	
 	mutable struct Ray
-		origin::Point
+		origin::Vec3
 		direction::Vec3
-
-		Ray() = new(Point(),Vec3())
+	
+		Ray() = new(Vec3(),Vec3())
 		Ray(origin, direction) = new(origin, direction)
 	end
-
+	
 	function write_color(io::IO, pixel_color::Vec3)
-	    r = pixel_color.x
-	    g = pixel_color.y
-	    b = pixel_color.z
+		r = pixel_color.x
+		g = pixel_color.y
+		b = pixel_color.z
+		
+		# Translate the [0,1] component values to the byte range [0,255].
+		rbyte = Int(floor(255.999 * r))
+		gbyte = Int(floor(255.999 * g))
+		bbyte = Int(floor(255.999 * b))
 	
-	    # Translate the [0,1] component values to the byte range [0,255].
-	    rbyte = Int(floor(255.999 * r))
-	    gbyte = Int(floor(255.999 * g))
-	    bbyte = Int(floor(255.999 * b))
-	
-	    # Write out the pixel color components.
-	    println(io, "$rbyte $gbyte $bbyte")
+		# Write out the pixel color components.
+		println(io, "$rbyte $gbyte $bbyte")
 	end
-
+	
 	function ray_color(r::Ray)
-		unit_direction = normalize(r.direction)
-    	a = 0.5 * (unit_direction.y + 1.0)
-    	return (1.0 - a) * Vec3(1.0, 1.0, 1.0) + a * Vec3(0.5, 0.7, 1.0)
+		if hits_sphere(Vec3(2,3,-10), 1, r)
+			#  println("Hit Detected!")
+			return Vec3(178/256,172/256,136/256) end
+		
+		unit_direction = unit_vector(r.direction)
+		a = 0.5 * (unit_direction.y + 1.0)
+		return (1.0 - a) * Vec3(1.0, 1.0, 1.0) + a * Vec3(0.5, 0.7, 1.0)
 	end
-
+	
 	# overloaded operators
 	Base.:+(u::Union{Point,Vec3}, v::Union{Point,Vec3}) = Vec3(u.x + v.x, u.y + v.y, u.z + v.z)
 	Base.:-(u::Union{Point,Vec3}, v::Union{Point,Vec3}) = Vec3(u.x - v.x, u.y - v.y, u.z - v.z)
@@ -131,54 +100,72 @@ module _Vectors
 	Base.:*(t::Union{Float64, Int64}, v::Vec3) = Vec3(t * v.x, t * v.y, t * v.z)
 	Base.:*(v::Vec3, t::Union{Float64, Int64}) = t * v
 	Base.:/(v::Vec3, t::Union{Float64, Int64}) = (1/t) * v
-
+	
 	# Vector operations
 	function dot(u::Vec3, v::Vec3)
-	    return u.x * v.x + u.y * v.y + u.z * v.z
+		return u.x * v.x + u.y * v.y + u.z * v.z
 	end
 	
 	function cross(u::Vec3, v::Vec3)
-	    return Vec3(
-	        u.y * v.z - u.z * v.y,
-	        u.z * v.x - u.x * v.z,
-	        u.x * v.y - u.y * v.x
-	    )
+		return Vec3(
+			u.y * v.z - u.z * v.y,
+			u.z * v.x - u.x * v.z,
+			u.x * v.y - u.y * v.x
+		)
 	end
 	
 	function length(v::Vec3)
-	    return sqrt(dot(v, v))
+		return sqrt(dot(v, v))
 	end
+		
+		function unit_vector(v::Vec3)
+		    return v / length(v)
+		end
 	
-	function unit_vector(v::Vec3)
-	    return v / length(v)
-	end
-
 	# Ray Operator
 	function at(ray::Ray, t::Float64)
 		return Ray(ray.origin, t* ray.direction)
 	end
+	
+	function hits_sphere(center::Vec3, radius::Union{Float64,Integer}, r::Ray)
+		oc = center - r.origin
+		a  = dot(r.direction, r.direction)
+		b  = -2* dot(r.direction, oc)
+		c  = dot(oc, oc) - radius*radius
+		discriminant = b*b -4*a*c
+		return  discriminant >= 0
+	end
+end
+
+# ╔═╡ e3abb105-ab54-47f0-9ee4-d9ba2f877d96
+begin
+	# setting image aspect ratios
+	aspect_ratio = 16/9
+	image_width  = 400
+	image_height = Int(floor(image_width/aspect_ratio))
+	image_height = (image_height < 1) ? 1 : image_height
 end
 
 # ╔═╡ 71e9eebd-9d94-405f-9d5f-a338507c9331
 begin
 	# camera
 	focal_length = 1.0
-	camera_center = _Vectors.Point(0,0,0)
+	camera_center = Vec3(0,0,0)
 
 	# setting viewport settings
 	viewport_height = 2.0;
 	viewport_width = viewport_height * ((image_width)/image_height);
 
 	# calculating vectors from viewport edges
-	vp_u = _Vectors.Vec3(viewport_width, 0, 0)
-	vp_v = _Vectors.Vec3(0, -viewport_height, 0)
+	vp_u = Vec3(viewport_width, 0, 0)
+	vp_v = Vec3(0, -viewport_height, 0)
 
 	# pixel to pixel distance 
 	pixel_Δu = vp_u / image_width
-	pixel_Δv = vp_u / image_height
+	pixel_Δv = vp_v / image_height
 
 	# calculate the locaiton of upper left pixel
-	vp_ul = camera_center - _Vectors.Vec3(0,0, focal_length) - vp_u/2 - vp_v/2
+	vp_ul = camera_center - Vec3(0,0, focal_length) - vp_u/2 - vp_v/2
 	pixel00_loc = vp_ul + .5 * (pixel_Δu + pixel_Δv)
 end
 
@@ -190,42 +177,7 @@ begin
 	end
 end
 
-# ╔═╡ 7dd20da4-9268-4f28-a0d8-510c564f2569
-# ╠═╡ disabled = true
-#=╠═╡
-begin
-	image_width = 256
-	image_height = 256
-
-	test_image = joinpath(image_dir, "test.ppm")
-	open(test_image, "w") do io
-		
-		# PPM Header
-		println(io, "P3")
-		println(io, "$image_width $image_height")
-		println(io, "255")
-
-		# rendering the image
-		for i in 0:image_height-1
-			for j in 0:image_width-1
-				r = j / (image_width-1)
-				g = i / (image_height-1)
-				b = 0.0
-	
-				ir = Int(floor(255.999*r))
-				ig = Int(floor(255.999*g))
-				ib = Int(floor(255.999*b))
-
-				println(io, "$ir $ig $ib")
-			end
-		end
-	end
-end
-  ╠═╡ =#
-
 # ╔═╡ 0c94476a-4e84-449e-96f9-82bdba75638c
-# ╠═╡ disabled = true
-#=╠═╡
 begin
 	test_image = joinpath(image_dir, "test.ppm")
 	open(test_image, "w") do io
@@ -236,15 +188,13 @@ begin
 	
 	for j in 0:image_height-1
 	    print("\rScanlines remaining: ", image_height - j, " ")
-	    flush(stdout)
 	    for i in 0:image_width-1
 	        pixel_center = pixel00_loc + (i * pixel_Δu) + (j * pixel_Δv)
 	        ray_direction = pixel_center - camera_center
-	        r = _Vectors.Ray(camera_center, ray_direction)
+	        r = Ray(camera_center, ray_direction)
 	        
-	        pixel_color = _Vectors.ray_color(r)
-	        _Vectors.write_color(stdout, pixel_color)
-			println(io, )
+	        pixel_color = ray_color(r)
+	        write_color(io, pixel_color)
 	    end
 	end
 	
@@ -252,21 +202,10 @@ begin
 
 	end
 end
-  ╠═╡ =#
-
-# ╔═╡ e3abb105-ab54-47f0-9ee4-d9ba2f877d96
-begin
-	# setting image aspect ratios
-	aspect_ratio = 16/9
-	image_width  = 400
-	image_height = Int(floor(image_width*aspect_ratio))
-	image_height = (image_height < 1) ? 1 : image_height
-end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
-Colors = "5ae59095-9a9b-59fe-a467-6f913c188581"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 FITSIO = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
 FileIO = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
@@ -276,7 +215,6 @@ Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 
 [compat]
-Colors = "~0.13.0"
 DataFrames = "~1.7.0"
 FITSIO = "~0.17.4"
 FileIO = "~1.17.0"
@@ -292,7 +230,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.11.4"
 manifest_format = "2.0"
-project_hash = "e0f2ac2845d2cf4240590682662c57857b5918ef"
+project_hash = "76101bcd349cbab3cf9cf954b31e008c6a3e6086"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -2248,14 +2186,11 @@ version = "1.4.1+2"
 
 # ╔═╡ Cell order:
 # ╠═030c1024-fb93-11ef-2b4b-eb960db95896
-# ╠═7dd20da4-9268-4f28-a0d8-510c564f2569
-# ╠═b5e611b8-9484-47ba-9f85-6ee20e1c8f0d
 # ╠═e3abb105-ab54-47f0-9ee4-d9ba2f877d96
 # ╠═71e9eebd-9d94-405f-9d5f-a338507c9331
+# ╠═acde8792-beba-40e8-ab42-fba842f5fc82
 # ╠═0c94476a-4e84-449e-96f9-82bdba75638c
 # ╟─64d7ac23-91f3-4746-b39f-2206a2fbd22f
-# ╠═8c9ec56f-a7ae-4169-8019-a3d6278f1f1f
-# ╠═7fe44050-38ae-419a-99ed-f7a4e32b7c7c
 # ╠═fc3a2308-6399-48f8-92aa-f1344f8f686c
 # ╠═cdc1f5ba-ca06-4ac9-b4c7-b2157df8c00b
 # ╠═ef223e66-6826-4ab9-b104-8124d3492aed
