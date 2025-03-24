@@ -68,30 +68,6 @@ begin
 		Ray(origin, direction) = new(origin, direction)
 	end
 	
-	function write_color(io::IO, pixel_color::Vec3)
-		r = pixel_color.x
-		g = pixel_color.y
-		b = pixel_color.z
-		
-		# Translate the [0,1] component values to the byte range [0,255].
-		rbyte = Int(floor(255.999 * r))
-		gbyte = Int(floor(255.999 * g))
-		bbyte = Int(floor(255.999 * b))
-	
-		# Write out the pixel color components.
-		println(io, "$rbyte $gbyte $bbyte")
-	end
-	
-	function ray_color(r::Ray)
-		if hits_sphere(Vec3(2,3,-10), 1, r)
-			#  println("Hit Detected!")
-			return Vec3(178/256,172/256,136/256) end
-		
-		unit_direction = unit_vector(r.direction)
-		a = 0.5 * (unit_direction.y + 1.0)
-		return (1.0 - a) * Vec3(1.0, 1.0, 1.0) + a * Vec3(0.5, 0.7, 1.0)
-	end
-	
 	# overloaded operators
 	Base.:+(u::Union{Point,Vec3}, v::Union{Point,Vec3}) = Vec3(u.x + v.x, u.y + v.y, u.z + v.z)
 	Base.:-(u::Union{Point,Vec3}, v::Union{Point,Vec3}) = Vec3(u.x - v.x, u.y - v.y, u.z - v.z)
@@ -117,23 +93,17 @@ begin
 	function length(v::Vec3)
 		return sqrt(dot(v, v))
 	end
+
+	function length_squared(v::Vec3)
+		return dot(v, v) end
 		
-		function unit_vector(v::Vec3)
-		    return v / length(v)
-		end
+	function unit_vector(v::Vec3)
+		return v / length(v)
+	end
 	
 	# Ray Operator
 	function at(ray::Ray, t::Float64)
-		return Ray(ray.origin, t* ray.direction)
-	end
-	
-	function hits_sphere(center::Vec3, radius::Union{Float64,Integer}, r::Ray)
-		oc = center - r.origin
-		a  = dot(r.direction, r.direction)
-		b  = -2* dot(r.direction, oc)
-		c  = dot(oc, oc) - radius*radius
-		discriminant = b*b -4*a*c
-		return  discriminant >= 0
+		return ray.origin + t * ray.direction
 	end
 end
 
@@ -167,6 +137,48 @@ begin
 	# calculate the locaiton of upper left pixel
 	vp_ul = camera_center - Vec3(0,0, focal_length) - vp_u/2 - vp_v/2
 	pixel00_loc = vp_ul + .5 * (pixel_Δu + pixel_Δv)
+end
+
+# ╔═╡ a6a0111a-794c-474f-837f-3afb591e4a2e
+begin
+	md"""Collisions"""
+function hits_sphere(center::Vec3, radius::Union{Float64,Integer}, r::Ray)
+	oc = center - r.origin
+	a  = length_squared(r.direction)
+	h  = dot(r.direction, oc)
+	c  = dot(oc, oc) - radius*radius
+	discriminant = h * h - a * c
+	return  discriminant >= 0 ? (h - sqrt(discriminant)) / (a) : -1
+end
+end
+
+# ╔═╡ 48474f2f-2efe-4cb0-a535-a1a7dd08625d
+begin
+	md"""Coloring & Lighting"""
+function write_color(io::IO, pixel_color::Vec3)
+		r = pixel_color.x
+		g = pixel_color.y
+		b = pixel_color.z
+		
+		# Translate the [0,1] component values to the byte range [0,255].
+		rbyte = Int(floor(255.999 * r))
+		gbyte = Int(floor(255.999 * g))
+		bbyte = Int(floor(255.999 * b))
+	
+		# Write out the pixel color components.
+		println(io, "$rbyte $gbyte $bbyte")
+	end
+	
+	function ray_color(r::Ray)
+		t = t = hits_sphere(Vec3(0,0,-1), .5, r)
+		if t > 0
+			N = unit_vector(at(r, t) - Vec3(0,0,-1))
+			return .5 * Vec3(N.x+1, N.y+1, N.z+1) end
+		
+		unit_direction = unit_vector(r.direction)
+		a = 0.5 * (unit_direction.y + 1.0)
+		return (1.0 - a) * Vec3(1.0, 1.0, 1.0) + a * Vec3(0.5, 0.7, 1.0)
+	end
 end
 
 # ╔═╡ cdc1f5ba-ca06-4ac9-b4c7-b2157df8c00b
@@ -2191,6 +2203,8 @@ version = "1.4.1+2"
 # ╠═acde8792-beba-40e8-ab42-fba842f5fc82
 # ╠═0c94476a-4e84-449e-96f9-82bdba75638c
 # ╟─64d7ac23-91f3-4746-b39f-2206a2fbd22f
+# ╠═48474f2f-2efe-4cb0-a535-a1a7dd08625d
+# ╠═a6a0111a-794c-474f-837f-3afb591e4a2e
 # ╠═fc3a2308-6399-48f8-92aa-f1344f8f686c
 # ╠═cdc1f5ba-ca06-4ac9-b4c7-b2157df8c00b
 # ╠═ef223e66-6826-4ab9-b104-8124d3492aed
