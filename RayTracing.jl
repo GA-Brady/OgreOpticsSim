@@ -26,14 +26,6 @@ Start : March 7th, 2025
 This pluto notebook serves to complete the Simulation for Optical Scattering with the OGRE-P payload. In short, this script aims to determine the requried properties of optical blocking filters before the X-ray CCD's to limit the background saturation. 
 =#
 
-# ╔═╡ acde8792-beba-40e8-ab42-fba842f5fc82
-struct meep
-	x::String
-
-	meep() = new("")
-	meep(x) = new(x)
-end
-
 # ╔═╡ 64d7ac23-91f3-4746-b39f-2206a2fbd22f
 md"### Setup & Helper"
 
@@ -105,7 +97,7 @@ begin
 	function at(ray::Ray, t::Float64)
 		return ray.origin + t * ray.direction
 	end
-end
+end;
 
 # ╔═╡ e3abb105-ab54-47f0-9ee4-d9ba2f877d96
 begin
@@ -141,16 +133,61 @@ end
 
 # ╔═╡ a6a0111a-794c-474f-837f-3afb591e4a2e
 begin
-	md"""Collisions"""
-function hits_sphere(center::Vec3, radius::Union{Float64,Integer}, r::Ray)
-	oc = center - r.origin
-	a  = length_squared(r.direction)
-	h  = dot(r.direction, oc)
-	c  = dot(oc, oc) - radius*radius
-	discriminant = h * h - a * c
-	return  discriminant >= 0 ? (h - sqrt(discriminant)) / (a) : -1
-end
-end
+	md"""Collisions & Surfaces"""
+	abstract type AbstractHittable end
+		# general hittable objects
+	
+	struct Sphere
+		center::Vec3
+		radius::Union{Float64,Integer}
+
+		Sphere() = new()
+		Sphere(center, radius) = new(center, radius) end
+
+	struct HitRecord
+		t::Float64 # point along ray
+		p::Vec3 # intersection point
+		n::Vec3 # normal vector at intersection
+
+		HitRecord(t, p, normal) = new(t, p, normal)
+	end
+	
+	#=	
+	function hit(obj::AbstractHittable, r::Ray, ray_tmin::Float64, ray_tmax::Float64) :: Union{Nothing, HitRecord}
+	    error("hit function must be implemented for each hittable object.")
+		# abstract function that ecah shape must implement
+	end
+	=#
+	
+	function hit(sphere::Sphere, r::Ray, ray_tmin, ray_tmax) :: Union{Bool, HitRecord}
+		center = sphere.center
+		radius = sphere.radius
+		
+		oc = center - r.origin
+		a  = length_squared(r.direction)
+		h  = dot(r.direction, oc)
+		c  = dot(oc, oc) - radius*radius
+		
+		discriminant = h * h - a * c
+		
+		if discriminant < 0 
+			return false 
+		end
+		
+		sqrtd = sqrt(discriminant)
+		root = (h - sqrtd) / a
+		if (root <= ray_tmin || ray_tmax <= root) # is root in [t_mix, t_max]
+			root = (h+sqrtd) / a
+			if (root <= ray_tmin || t_max <= root) 
+				return false end 
+		end
+		
+		point = at(r, root)
+		normal = (point - center)/radius
+		hit_record = HitRecord(root, point, normal)
+		return hit_record
+	end
+end;
 
 # ╔═╡ 48474f2f-2efe-4cb0-a535-a1a7dd08625d
 begin
@@ -170,16 +207,20 @@ function write_color(io::IO, pixel_color::Vec3)
 	end
 	
 	function ray_color(r::Ray)
-		t = t = hits_sphere(Vec3(0,0,-1), .5, r)
-		if t > 0
-			N = unit_vector(at(r, t) - Vec3(0,0,-1))
+		sphere = Sphere(Vec3(0,0,-1), .5)
+		hit_record = hit(sphere, r, -100, 100)
+		if hit_record != false
+			N = hit_record.n
 			return .5 * Vec3(N.x+1, N.y+1, N.z+1) end
 		
 		unit_direction = unit_vector(r.direction)
 		a = 0.5 * (unit_direction.y + 1.0)
 		return (1.0 - a) * Vec3(1.0, 1.0, 1.0) + a * Vec3(0.5, 0.7, 1.0)
 	end
-end
+end;
+
+# ╔═╡ a1ab6f8c-319a-44c6-821a-9fa7c3f72619
+Sphere(Vec3(0,0,-1), 3)
 
 # ╔═╡ cdc1f5ba-ca06-4ac9-b4c7-b2157df8c00b
 begin
@@ -2200,10 +2241,10 @@ version = "1.4.1+2"
 # ╠═030c1024-fb93-11ef-2b4b-eb960db95896
 # ╠═e3abb105-ab54-47f0-9ee4-d9ba2f877d96
 # ╠═71e9eebd-9d94-405f-9d5f-a338507c9331
-# ╠═acde8792-beba-40e8-ab42-fba842f5fc82
 # ╠═0c94476a-4e84-449e-96f9-82bdba75638c
 # ╟─64d7ac23-91f3-4746-b39f-2206a2fbd22f
 # ╠═48474f2f-2efe-4cb0-a535-a1a7dd08625d
+# ╠═a1ab6f8c-319a-44c6-821a-9fa7c3f72619
 # ╠═a6a0111a-794c-474f-837f-3afb591e4a2e
 # ╠═fc3a2308-6399-48f8-92aa-f1344f8f686c
 # ╠═cdc1f5ba-ca06-4ac9-b4c7-b2157df8c00b
